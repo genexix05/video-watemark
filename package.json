@@ -1,0 +1,83 @@
+{
+  "name": "video-watermark",
+  "productName": "Video Watermark",
+  "description": "Editor local multiplataforma para añadir marcas de agua a imágenes y vídeos.",
+  "private": true,
+  "version": "0.1.0",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "typecheck": "tsc -b",
+    "build": "npm run typecheck && electron-vite build",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "preview": "electron-vite preview",
+    "prepare:media": "node scripts/prepare-media-binaries.mjs",
+    "package": "npm run build && npm run prepare:media && electron-builder",
+    "package:mac": "npm run build && npm run prepare:media -- darwin && electron-builder --mac",
+    "package:win": "npm run build && npm run prepare:media -- win32 && electron-builder --win",
+    "package:linux": "npm run build && npm run prepare:media -- linux && electron-builder --linux"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
+  },
+  "build": {
+    "appId": "com.local.video-watermark",
+    "productName": "Video Watermark",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/media-bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.video"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo"
+    }
+  }
+}
