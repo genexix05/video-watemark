@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ExportProgress,
   ImageFormat,
-  RuntimeInfo,
+  PresetSummary,
   SelectedFile,
   VideoQualityProfile,
   WatermarkLayer as ExportLayer,
@@ -10,6 +10,7 @@ import type {
 import { EditorCanvas } from './components/EditorCanvas'
 import { Icon } from './components/Icons'
 import { PropertiesPanel } from './components/PropertiesPanel'
+import { PresetsPanel } from './components/PresetsPanel'
 import { Timeline } from './components/Timeline'
 import type { LayerPatch, MediaSource, WatermarkLayer } from './editor-types'
 import './styles.css'
@@ -37,9 +38,13 @@ const exportExtension = (
   return format === 'jpeg' ? 'jpg' : format
 }
 
+type Theme = 'dark' | 'light'
+const initialTheme = (): Theme =>
+  localStorage.getItem('watermark-theme') === 'light' ? 'light' : 'dark'
+
 export default function App() {
-  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [media, setMedia] = useState<MediaSource | null>(null)
+  const [loadingMedia, setLoadingMedia] = useState(false)
   const [layers, setLayers] = useState<WatermarkLayer[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -53,12 +58,21 @@ export default function App() {
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [completedPath, setCompletedPath] = useState<string | null>(null)
+  const [theme, setTheme] = useState<Theme>(initialTheme)
+  const [presets, setPresets] = useState<PresetSummary[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
+  const resumeAfterScrub = useRef(false)
+  const scrubbingRef = useRef(false)
 
   useEffect(() => {
-    void window.watermarkApi.getRuntimeInfo().then(setRuntime).catch(() => undefined)
+    void window.watermarkApi.listPresets().then(setPresets).catch(() => undefined)
     return window.watermarkApi.onExportProgress(setProgress)
   }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('watermark-theme', theme)
+  }, [theme])
 
   const openMedia = async () => {
     setError(null)
@@ -67,6 +81,7 @@ export default function App() {
       return null
     })
     if (!file) return
+    setLoadingMedia(true)
     try {
       const metadata = await window.watermarkApi.probeMedia(file.path)
       setMedia({
@@ -93,6 +108,7 @@ export default function App() {
       setProgress(null)
     } catch (reason) {
       setError(errorMessage(reason))
+      setLoadingMedia(false)
     }
   }
 
@@ -161,6 +177,78 @@ export default function App() {
     setSelectedId((current) => (current === id ? null : current))
   }
 
+  const centerLayer = () => {
+    if (!media || !selectedId) return
+    const layer = layers.find((item) => item.id === selectedId)
+    if (layer) {
+      updateLayer(layer.id, {
+        x: (media.width - layer.width) / 2,
+        y: (media.height - layer.height) / 2,
+      })
+    }
+  }
+
+  const saveCurrentPreset = async () => {
+    if (!media || layers.length === 0) return
+    const name = window.prompt('Nombre del preset')
+    if (!name) return
+    try {
+      const preset = await window.watermarkApi.savePreset({
+        name,
+        mediaWidth: media.width,
+        mediaHeight: media.height,
+        mediaDuration: media.duration,
+        layers: layers.map((layer) => ({
+          name: layer.name,
+          sourcePath: layer.sourcePath,
+          naturalWidth: layer.naturalWidth,
+          naturalHeight: layer.naturalHeight,
+          x: layer.x,
+          y: layer.y,
+          width: layer.width,
+          height: layer.height,
+          rotation: layer.rotation,
+          opacity: layer.opacity,
+          startTime: layer.startTime,
+          endTime: layer.endTime,
+          visible: layer.visible,
+        })),
+      })
+      setPresets((current) => [...current, preset])
+    } catch (reason) {
+      setError(errorMessage(reason))
+    }
+  }
+
+  const applySavedPreset = async (presetId: string) => {
+    if (!media) return
+    try {
+      const preset = await window.watermarkApi.applyPreset(
+        presetId,
+        media.width,
+        media.height,
+        media.duration,
+      )
+      const additions: WatermarkLayer[] = preset.layers.map(
+        ({ previewUrl, ...layer }) => ({ ...layer, url: previewUrl }),
+      )
+      setLayers((current) => [...current, ...additions])
+      setSelectedId(additions.at(-1)?.id ?? null)
+    } catch (reason) {
+      setError(errorMessage(reason))
+    }
+  }
+
+  const removePreset = async (presetId: string) => {
+    try {
+      if (await window.watermarkApi.deletePreset(presetId)) {
+        setPresets((current) => current.filter((preset) => preset.id !== presetId))
+      }
+    } catch (reason) {
+      setError(errorMessage(reason))
+    }
+  }
+
   const reorderLayer = (id: string, direction: -1 | 1) => {
     setLayers((current) => {
       const from = current.findIndex((layer) => layer.id === id)
@@ -178,6 +266,38 @@ export default function App() {
     setCurrentTime(nextTime)
   }
 
+  const handleMediaTime = useCallback((time: number) => {
+    if (scrubbingRef.current || videoRef.current?.seeking) return
+    setCurrentTime(time)
+  }, [])
+
+  const startScrubbing = () => {
+    const video = videoRef.current
+    scrubbingRef.current = true
+    resumeAfterScrub.current = Boolean(video && !video.paused)
+    video?.pause()
+  }
+
+  const finishScrubbing = () => {
+    const video = videoRef.current
+    const shouldResume = resumeAfterScrub.current
+    resumeAfterScrub.current = false
+
+    const finish = () => {
+      scrubbingRef.current = false
+      if (video) setCurrentTime(video.currentTime)
+      if (shouldResume && video) {
+        void video.play().catch(() => setIsPlaying(false))
+      }
+    }
+
+    if (video?.seeking) {
+      video.addEventListener('seeked', finish, { once: true })
+    } else {
+      finish()
+    }
+  }
+
   const togglePlayback = () => {
     const video = videoRef.current
     if (!video) return
@@ -191,6 +311,7 @@ export default function App() {
 
   const resetProject = () => {
     setMedia(null)
+    setLoadingMedia(false)
     setLayers([])
     setSelectedId(null)
     setError(null)
@@ -304,42 +425,82 @@ export default function App() {
 
   if (!media) {
     return (
-      <main className="welcome-shell">
-        <header className="welcome-header">
-          <Brand />
-          <span className="local-badge">
-            <span aria-hidden="true" className="status-dot" />{' '}
-            100% local
-          </span>
-        </header>
-        <section className="welcome-content">
-          <div className="welcome-copy">
-            <span className="eyebrow">Estudio de composición</span>
-            <h1>Tu marca, en el lugar perfecto.</h1>
-            <p>
-              Superpón logotipos en fotos y vídeos con precisión, sin subir
-              ningún archivo a internet.
-            </p>
+      <main className="editor-shell empty-editor-shell">
+        <header className="app-header">
+          <Brand compact />
+          <div className="project-name is-empty">
+            <span>
+              <strong>Sin proyecto abierto</strong>
+              <small>Editor local</small>
+            </span>
           </div>
+          <div className="header-actions">
           <button
-            className="drop-card"
-            onClick={() => void openMedia()}
+            className="theme-toggle"
+            onClick={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
             type="button"
           >
-            <span className="upload-orbit">
-              <Icon name="upload" />
-            </span>
-            <strong>Selecciona una foto o vídeo</strong>
-            <span>Se abrirá el selector seguro del sistema</span>
-            <small>JPG, PNG, WebP, MP4, MOV, WebM y más</small>
+              {theme === 'dark' ? 'Claro' : 'Oscuro'}
           </button>
-          {error && <p className="error-message" role="alert">{error}</p>}
+            <button className="export-button" onClick={() => void openMedia()} type="button">
+              Abrir archivo
+            </button>
+          </div>
+        </header>
+
+        <section className="editor-workspace empty-workspace">
+          <aside className="editor-tools" aria-label="Herramientas no disponibles">
+            <button aria-label="Abrir archivo" onClick={() => void openMedia()} type="button">
+              <Icon name="upload" />
+            </button>
+            <button aria-label="Añadir marca" disabled type="button">
+              <Icon name="add" />
+            </button>
+          </aside>
+
+          <div className="canvas-column">
+            <div className="canvas-toolbar">
+              <span className="empty-toolbar-label">Área de trabajo</span>
+              <span className="empty-toolbar-meta">Ningún archivo seleccionado</span>
+            </div>
+            <div className="empty-canvas">
+              <section className="new-project-panel">
+                <Icon name="upload" />
+                <h1>Abrir foto o vídeo</h1>
+                <p>Crea un proyecto seleccionando un archivo de tu equipo.</p>
+                <button
+                  className="export-button"
+                  onClick={() => void openMedia()}
+                  type="button"
+                >
+                  Seleccionar archivo…
+                </button>
+                <small>JPG, PNG, WebP, MP4, MOV y WebM</small>
+              </section>
+              {error && <p className="error-toast" role="alert">{error}</p>}
+            </div>
+          </div>
+
+          <aside className="right-dock empty-right-dock">
+            <section className="empty-dock-panel">
+              <h2>Proyecto</h2>
+              <dl>
+                <div><dt>Documento</dt><dd>Sin abrir</dd></div>
+                <div><dt>Capas</dt><dd>0</dd></div>
+              </dl>
+            </section>
+            <section className="empty-dock-panel">
+              <h2>Presets</h2>
+              <p>
+                {presets.length === 0
+                  ? 'No hay presets guardados.'
+                  : `${presets.length} presets disponibles.`}
+              </p>
+              <small>Abre un archivo para aplicar uno.</small>
+            </section>
+          </aside>
         </section>
-        <footer className="welcome-footer">
-          <span>Privado por diseño</span>
-          <span>•</span>
-          <span>{runtime ? `Electron ${runtime.versions.electron}` : 'Preparando entorno…'}</span>
-        </footer>
+        {loadingMedia && <LoadingOverlay />}
       </main>
     )
   }
@@ -359,6 +520,13 @@ export default function App() {
           </span>
         </div>
         <div className="header-actions">
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
+            type="button"
+          >
+            {theme === 'dark' ? 'Claro' : 'Oscuro'}
+          </button>
           <button
             className="ghost-button"
             disabled={exporting}
@@ -380,6 +548,24 @@ export default function App() {
       </header>
 
       <section className="editor-workspace">
+        <aside className="editor-tools" aria-label="Herramientas">
+          <button
+            aria-label="Añadir marca de agua"
+            disabled={exporting}
+            onClick={() => void addWatermarks()}
+            type="button"
+          >
+            <Icon name="add" />
+          </button>
+          <button
+            aria-label="Centrar capa"
+            disabled={!selectedId}
+            onClick={centerLayer}
+            type="button"
+          >
+            ⊕
+          </button>
+        </aside>
         <div className="canvas-column">
           <div className="canvas-toolbar">
             <button
@@ -415,7 +601,8 @@ export default function App() {
             layers={layers}
             media={media}
             onChange={updateLayer}
-            onMediaTime={setCurrentTime}
+            onLoadingChange={setLoadingMedia}
+            onMediaTime={handleMediaTime}
             onPlaybackChange={setIsPlaying}
             onSelect={setSelectedId}
             selectedId={selectedId}
@@ -431,15 +618,25 @@ export default function App() {
           )}
         </div>
 
-        <PropertiesPanel
-          layers={layers}
-          media={media}
-          onChange={updateLayer}
-          onDelete={deleteLayer}
-          onReorder={reorderLayer}
-          onSelect={setSelectedId}
-          selectedId={selectedId}
-        />
+        <aside className="right-dock">
+          <PropertiesPanel
+            layers={layers}
+            media={media}
+            onChange={updateLayer}
+            onDelete={deleteLayer}
+            onReorder={reorderLayer}
+            onSelect={setSelectedId}
+            selectedId={selectedId}
+          />
+          <PresetsPanel
+            canSave={layers.length > 0}
+            disabled={exporting}
+            onApply={(id) => void applySavedPreset(id)}
+            onDelete={(id) => void removePreset(id)}
+            onSave={() => void saveCurrentPreset()}
+            presets={presets}
+          />
+        </aside>
       </section>
 
       {media.kind === 'video' && (
@@ -449,6 +646,8 @@ export default function App() {
           isPlaying={isPlaying}
           layers={layers}
           onPlayToggle={togglePlayback}
+          onScrubEnd={finishScrubbing}
+          onScrubStart={startScrubbing}
           onSeek={seek}
           onSelect={setSelectedId}
           selectedId={selectedId}
@@ -481,6 +680,7 @@ export default function App() {
           videoProfile={videoProfile}
         />
       )}
+      {loadingMedia && <LoadingOverlay />}
     </main>
   )
 }
@@ -488,10 +688,18 @@ export default function App() {
 function Brand({ compact = false }: Readonly<{ compact?: boolean }>) {
   return (
     <div className={`brand${compact ? ' is-compact' : ''}`}>
-      <span className="brand-mark">
-        <span />
-      </span>
+      <span className="brand-mark">W</span>
       <span className="brand-name">Watermark Studio</span>
+    </div>
+  )
+}
+
+function LoadingOverlay() {
+  return (
+    <div className="media-loading-overlay" role="status" aria-live="polite">
+      <span className="loading-spinner" aria-hidden="true" />
+      <strong>Cargando archivo…</strong>
+      <small>Los vídeos grandes pueden tardar unos segundos.</small>
     </div>
   )
 }

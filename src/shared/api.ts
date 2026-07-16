@@ -25,6 +25,10 @@ export const IPC_CHANNELS = {
   exportVideo: 'media:export-video',
   cancelExport: 'media:cancel-export',
   exportProgress: 'media:export-progress',
+  listPresets: 'presets:list',
+  savePreset: 'presets:save',
+  applyPreset: 'presets:apply',
+  deletePreset: 'presets:delete',
 } as const
 
 export interface MediaMetadata {
@@ -58,6 +62,48 @@ export interface WatermarkLayer {
   order: number
   startTime?: number
   endTime?: number
+}
+
+export interface PresetLayerInput {
+  name: string
+  sourcePath: string
+  naturalWidth: number
+  naturalHeight: number
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+  opacity: number
+  startTime: number
+  endTime: number
+  visible: boolean
+}
+
+export interface SavePresetRequest {
+  name: string
+  mediaWidth: number
+  mediaHeight: number
+  mediaDuration: number
+  layers: PresetLayerInput[]
+}
+
+export interface PresetSummary {
+  id: string
+  name: string
+  layerCount: number
+  createdAt: string
+}
+
+export interface AppliedPresetLayer extends PresetLayerInput {
+  id: string
+  previewUrl: string
+}
+
+export interface AppliedPreset {
+  id: string
+  name: string
+  layers: AppliedPresetLayer[]
 }
 
 interface ExportBaseRequest {
@@ -106,5 +152,14 @@ export interface WatermarkApi {
   exportImage: (request: ExportImageRequest) => Promise<ExportResult>
   exportVideo: (request: ExportVideoRequest) => Promise<ExportResult>
   cancelExport: (jobId: string) => Promise<boolean>
+  listPresets: () => Promise<PresetSummary[]>
+  savePreset: (request: SavePresetRequest) => Promise<PresetSummary>
+  applyPreset: (
+    presetId: string,
+    mediaWidth: number,
+    mediaHeight: number,
+    mediaDuration: number,
+  ) => Promise<AppliedPreset>
+  deletePreset: (presetId: string) => Promise<boolean>
   onExportProgress: (listener: (progress: ExportProgress) => void) => () => void
 }

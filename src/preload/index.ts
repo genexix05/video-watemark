@@ -5,6 +5,7 @@ import {
   type ExportProgress,
   type ExportVideoRequest,
   type MediaKind,
+  type SavePresetRequest,
   type WatermarkApi,
 } from '../shared/api'
 
@@ -21,6 +22,24 @@ const api: WatermarkApi = {
     ipcRenderer.invoke(IPC_CHANNELS.exportVideo, request),
   cancelExport: (jobId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.cancelExport, jobId),
+  listPresets: () => ipcRenderer.invoke(IPC_CHANNELS.listPresets),
+  savePreset: (request: SavePresetRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.savePreset, request),
+  applyPreset: (
+    presetId: string,
+    mediaWidth: number,
+    mediaHeight: number,
+    mediaDuration: number,
+  ) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.applyPreset,
+      presetId,
+      mediaWidth,
+      mediaHeight,
+      mediaDuration,
+    ),
+  deletePreset: (presetId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.deletePreset, presetId),
   onExportProgress: (listener: (progress: ExportProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ExportProgress): void =>
       listener(progress)

@@ -8,13 +8,32 @@ export interface ProcessResult {
 export class MediaProcessError extends Error {
   readonly stderr: string
   readonly exitCode: number | null
+  readonly command: string
+  readonly context: string
 
-  constructor(message: string, stderr: string, exitCode: number | null) {
-    super(message)
+  constructor(
+    message: string,
+    stderr: string,
+    exitCode: number | null,
+    command = 'proceso multimedia',
+    context = '',
+  ) {
+    const detail = usefulStderr(stderr)
+    super([message, context, detail].filter(Boolean).join('\n'))
     this.name = 'MediaProcessError'
     this.stderr = stderr
     this.exitCode = exitCode
+    this.command = command
+    this.context = context
   }
+}
+
+export const usefulStderr = (stderr: string, maximum = 2_000): string => {
+  const normalized = stderr.replace(/\r/g, '').trim()
+  if (!normalized) return 'FFmpeg no proporcionó detalles adicionales.'
+  const lines = normalized.split('\n')
+  const useful = lines.slice(Math.max(0, lines.length - 12)).join('\n')
+  return useful.length > maximum ? `…${useful.slice(-maximum)}` : useful
 }
 
 export const runProcess = (
@@ -49,6 +68,8 @@ export const runProcess = (
             `El proceso multimedia terminó con código ${code ?? 'desconocido'}.`,
             stderr,
             code,
+            executable.split(/[\\/]/).at(-1) ?? 'proceso multimedia',
+            `Argumentos: ${args.map((argument) => (argument.includes('/') || argument.includes('\\') ? '<archivo>' : argument)).join(' ')}`,
           ),
         )
       }

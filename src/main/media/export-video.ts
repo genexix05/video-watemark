@@ -122,8 +122,10 @@ export const exportVideo = async (
     ...audioCodecArgs(extension, metadata),
     '-pix_fmt',
     pixelFormat,
-    '-fps_mode',
-    'passthrough',
+    // -vsync 0 funciona desde FFmpeg 2.x. -fps_mode passthrough no existe en
+    // FFmpeg 4.1, que todavía se distribuye en algunos paquetes de Windows.
+    '-vsync',
+    '0',
     '-metadata:s:v:0',
     'rotate=0',
     '-t',
@@ -187,7 +189,17 @@ const runFfmpegWithProgress = (
         })
       }
     })
-    child.once('error', reject)
+    child.once('error', (error) =>
+      reject(
+        new MediaProcessError(
+          `No se pudo iniciar FFmpeg: ${error.message}`,
+          '',
+          null,
+          'ffmpeg',
+          'Exportación de vídeo',
+        ),
+      ),
+    )
     child.once('close', (code) => {
       if (code === 0) resolve()
       else {
@@ -196,6 +208,8 @@ const runFfmpegWithProgress = (
             `FFmpeg terminó con código ${code ?? 'desconocido'}.`,
             stderr,
             code,
+            'ffmpeg',
+            'Exportación de vídeo (las rutas se han ocultado por seguridad).',
           ),
         )
       }

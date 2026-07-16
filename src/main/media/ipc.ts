@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { basename, extname, parse, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { Readable } from 'node:stream'
 import {
   BrowserWindow,
   dialog,
   ipcMain,
-  net,
   protocol,
   type IpcMainInvokeEvent,
 } from 'electron'
@@ -14,10 +15,17 @@ import {
   type ExportImageRequest,
   type ExportProgress,
   type ExportVideoRequest,
+  type SavePresetRequest,
   type SelectedFile,
 } from '../../shared/api'
 import { ExportManager } from './export-manager'
 import { probeMedia } from './probe'
+import {
+  applyPreset,
+  deletePreset,
+  listPresets,
+  savePreset,
+} from './presets'
 
 const exportManager = new ExportManager()
 const approvedDestinations = new Map<number, Set<string>>()
@@ -49,6 +57,19 @@ const mediaFilters = [
 const watermarkFilters = [
   { name: 'Imágenes', extensions: ['jpeg', 'jpg', 'png', 'webp'] },
 ]
+const previewMimeTypes: Record<string, string> = {
+  '.avi': 'video/x-msvideo',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.m4v': 'video/x-m4v',
+  '.mkv': 'video/x-matroska',
+  '.mov': 'video/quicktime',
+  '.mp4': 'video/mp4',
+  '.png': 'image/png',
+  '.webm': 'video/webm',
+  '.webp': 'image/webp',
+}
 
 const ownerWindow = (event: IpcMainInvokeEvent): BrowserWindow | undefined =>
   BrowserWindow.fromWebContents(event.sender) ?? undefined
@@ -153,16 +174,124 @@ function assertExportRequest(
 }
 
 export const registerMediaPreviewProtocol = (): void => {
-  protocol.handle('media-preview', (request) => {
+  protocol.handle('media-preview', async (request) => {
     const url = new URL(request.url)
     const token = url.pathname.slice(1)
     const preview = url.hostname === 'asset' ? previewPaths.get(token) : undefined
     if (!preview) return new Response('Recurso no autorizado.', { status: 404 })
-    return net.fetch(pathToFileURL(preview.path).toString())
+
+    try {
+      const file = await stat(preview.path)
+      const range = request.headers.get('range')
+      const contentType =
+        previewMimeTypes[extname(preview.path).toLowerCase()] ?? 'application/octet-stream'
+
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim())
+        if (!match) {
+          return new Response(null, {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${file.size}` },
+          })
+        }
+
+        const requestedStart = match[1] ? Number(match[1]) : undefined
+        const requestedEnd = match[2] ? Number(match[2]) : undefined
+        const suffixRange = requestedStart === undefined
+        const start =
+          requestedStart ??
+          Math.max(0, file.size - Math.max(0, requestedEnd ?? 0))
+        const end = suffixRange
+          ? file.size - 1
+          : Math.min(requestedEnd ?? file.size - 1, file.size - 1)
+
+        if (!Number.isSafeInteger(start) || start < 0 || start > end || start >= file.size) {
+          return new Response(null, {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${file.size}` },
+          })
+        }
+
+        const stream = Readable.toWeb(
+          createReadStream(preview.path, { start, end }),
+        ) as ReadableStream<Uint8Array>
+        return new Response(request.method === 'HEAD' ? null : stream, {
+          status: 206,
+          headers: {
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(end - start + 1),
+            'Content-Range': `bytes ${start}-${end}/${file.size}`,
+            'Content-Type': contentType,
+          },
+        })
+      }
+
+      const stream = Readable.toWeb(
+        createReadStream(preview.path),
+      ) as ReadableStream<Uint8Array>
+      return new Response(request.method === 'HEAD' ? null : stream, {
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(file.size),
+          'Content-Type': contentType,
+        },
+      })
+    } catch {
+      return new Response('No se pudo abrir el recurso.', { status: 404 })
+    }
   })
 }
 
 export const registerMediaIpc = (): void => {
+  ipcMain.handle(IPC_CHANNELS.listPresets, () => listPresets())
+
+  ipcMain.handle(IPC_CHANNELS.savePreset, async (event, request: unknown) => {
+    if (!request || typeof request !== 'object' || !('layers' in request) || !Array.isArray(request.layers)) {
+      throw new Error('Los datos del preset no son válidos.')
+    }
+    const ownerId = trackOwner(event)
+    request.layers.forEach((layer) =>
+      assertApproved(
+        approvedWatermarks,
+        ownerId,
+        layer && typeof layer === 'object' && 'sourcePath' in layer
+          ? layer.sourcePath
+          : undefined,
+        'Una imagen del preset no está autorizada.',
+      ),
+    )
+    return savePreset(request as SavePresetRequest)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.applyPreset,
+    async (
+      event,
+      presetId: unknown,
+      mediaWidth: unknown,
+      mediaHeight: unknown,
+      mediaDuration: unknown,
+    ) => {
+      const ownerId = trackOwner(event)
+      const preset = await applyPreset(presetId, mediaWidth, mediaHeight, mediaDuration)
+      const files = selected(ownerId, preset.layers.map((layer) => layer.sourcePath))
+      const approvals = approvedWatermarks.get(ownerId) ?? new Set<string>()
+      files.forEach((file) => approvals.add(file.path))
+      approvedWatermarks.set(ownerId, approvals)
+      return {
+        ...preset,
+        layers: preset.layers.map((layer, index) => ({
+          ...layer,
+          previewUrl: files[index].previewUrl,
+        })),
+      }
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.deletePreset, (_event, presetId: unknown) =>
+    deletePreset(presetId),
+  )
+
   ipcMain.handle(IPC_CHANNELS.selectMedia, async (event) => {
     const result = await showOpenDialog(event, {
       title: 'Seleccionar foto o vídeo',

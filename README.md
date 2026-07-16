@@ -16,6 +16,12 @@ Las capas ocultas no se exportan. La exportación conserva las dimensiones del
 medio. Los vídeos mantienen duración, FPS y audio cuando el archivo de origen
 permite analizarlos correctamente.
 
+El editor incluye tema claro y oscuro persistente, guías y ajuste magnético al
+centro/bordes, acción de centrado, scrubbing por puntero y presets con varias
+capas. Los presets copian sus imágenes dentro de
+`app.getPath("userData")/presets`; por tanto, siguen funcionando aunque se
+mueva o elimine el archivo original.
+
 ## Desarrollo
 
 Requiere Node.js 20 o posterior.
@@ -39,7 +45,7 @@ procesamiento privilegiado; `src/preload` expone una API mínima;
 
 ## Empaquetado
 
-Genera cada instalador en su sistema operativo de destino:
+Genera los instaladores:
 
 ```bash
 npm run package:mac
@@ -48,8 +54,16 @@ npm run package:linux
 ```
 
 Los artefactos se escriben en `release/`. El paso `prepare:media` copia FFmpeg
-y FFprobe para la plataforma y arquitectura actuales a los recursos del
-paquete. No se requiere una instalación global de estas herramientas.
+y FFprobe a un directorio limpio y escribe `media-binaries.json`, evitando
+mezclar ejecutables de plataformas diferentes. No se requiere una instalación
+global de estas herramientas.
+
+`package:win` es reproducible desde macOS para Windows x64: descarga las
+versiones fijadas de `@ffmpeg-installer/win32-x64` y
+`@ffprobe-installer/win32-x64`, verifica la cabecera PE y genera NSIS y
+portable. Requiere red para obtener esos paquetes y Wine puede ser necesario
+según la versión/configuración de electron-builder. El FFmpeg 4.1 de Windows
+usa la opción compatible `-vsync 0`; no depende de `-fps_mode` (FFmpeg 5+).
 
 Los binarios de `ffmpeg-static` tienen licencia GPL-3.0-or-later. Antes de
 distribuir el producto deben incluirse las licencias y avisos exigidos y
@@ -63,6 +77,9 @@ revisarse las obligaciones aplicables al instalador completo.
   `nodeIntegration: false`.
 - El proceso principal solo acepta rutas elegidas previamente con los
   selectores nativos. El destino se autoriza para una única exportación.
+- El IPC de presets valida nombres, cantidades, números, extensiones, tamaños,
+  identificadores y rutas. Al aplicar un preset, sus copias internas se
+  autorizan solo para la ventana solicitante.
 - Se procesa primero un archivo temporal; el destino se sustituye únicamente
   cuando la exportación termina correctamente.
 
@@ -99,3 +116,5 @@ Vídeos:
   FFmpeg. Subtítulos, capítulos y pistas auxiliares no se conservan.
 - No hay aceleración por hardware; vídeos largos o de alta resolución pueden
   tardar y consumir bastante CPU y espacio temporal.
+- Si FFmpeg falla, la interfaz muestra el código, contexto sin rutas privadas y
+  las últimas líneas útiles de stderr para facilitar el diagnóstico.

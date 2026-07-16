@@ -17,7 +17,7 @@
     "prepare:media": "node scripts/prepare-media-binaries.mjs",
     "package": "npm run build && npm run prepare:media && electron-builder",
     "package:mac": "npm run build && npm run prepare:media -- darwin && electron-builder --mac",
-    "package:win": "npm run build && npm run prepare:media -- win32 && electron-builder --win",
+    "package:win": "npm run build && npm run prepare:media -- win32 x64 && electron-builder --win --x64",
     "package:linux": "npm run build && npm run prepare:media -- linux && electron-builder --linux"
   },
   "dependencies": {
@@ -79,5 +79,9 @@
       ],
       "category": "AudioVideo"
     }
+  },
+  "optionalDependencies": {
+    "@ffmpeg-installer/win32-x64": "^4.1.0",
+    "@ffprobe-installer/win32-x64": "^5.1.0"
   }
 }

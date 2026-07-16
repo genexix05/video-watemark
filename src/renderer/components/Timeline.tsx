@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { WatermarkLayer } from '../editor-types'
 import { Icon } from './Icons'
 
@@ -9,6 +10,8 @@ interface TimelineProps {
   selectedId: string | null
   onPlayToggle: () => void
   onSeek: (time: number) => void
+  onScrubStart: () => void
+  onScrubEnd: () => void
   onSelect: (id: string) => void
 }
 
@@ -29,10 +32,19 @@ export function Timeline({
   selectedId,
   onPlayToggle,
   onSeek,
+  onScrubStart,
+  onScrubEnd,
   onSelect,
-}: TimelineProps) {
+}: Readonly<TimelineProps>) {
   const safeDuration = Math.max(duration, 0.01)
   const playhead = (currentTime / safeDuration) * 100
+  const scrubbingRef = useRef(false)
+
+  const finishScrubbing = () => {
+    if (!scrubbingRef.current) return
+    scrubbingRef.current = false
+    onScrubEnd()
+  }
 
   return (
     <section className="timeline">
@@ -48,10 +60,6 @@ export function Timeline({
         <span className="timecode">{formatTime(currentTime)}</span>
         <span className="time-divider">/</span>
         <span className="timecode is-muted">{formatTime(duration)}</span>
-        <span className="timeline-title">
-          <Icon name="clock" />
-          Línea de tiempo
-        </span>
       </div>
 
       <div className="timeline-body">
@@ -60,16 +68,27 @@ export function Timeline({
           <span>{formatTime(duration / 2).slice(0, 5)}</span>
           <span>{formatTime(duration).slice(0, 5)}</span>
         </div>
-        <div className="timeline-track-area">
+        <div
+          className="timeline-track-area"
+          style={{ minHeight: `${Math.max(58, layers.length * 16 + 36)}px` }}
+        >
           <input
             aria-label="Posición de reproducción"
             className="timeline-seeker"
             max={safeDuration}
             min="0"
-            onChange={(event) => onSeek(Number(event.target.value))}
+            onChange={(event) => onSeek(Number(event.currentTarget.value))}
+            onInput={(event) => onSeek(Number(event.currentTarget.value))}
+            onPointerCancel={finishScrubbing}
+            onPointerDown={() => {
+              if (scrubbingRef.current) return
+              scrubbingRef.current = true
+              onScrubStart()
+            }}
+            onPointerUp={finishScrubbing}
             step="0.01"
             type="range"
-            value={currentTime}
+            value={Math.min(currentTime, safeDuration)}
           />
           <div className="timeline-ruler" aria-hidden="true" />
           <div
@@ -78,7 +97,7 @@ export function Timeline({
             aria-hidden="true"
           />
           <div className="timeline-layer-tracks">
-            {[...layers].reverse().map((layer) => (
+            {[...layers].reverse().map((layer, index) => (
               <button
                 aria-label={`Intervalo de ${layer.name}`}
                 className={`timeline-layer-bar${
@@ -86,8 +105,10 @@ export function Timeline({
                 }`}
                 key={layer.id}
                 onClick={() => onSelect(layer.id)}
+                onPointerDown={(event) => event.stopPropagation()}
                 style={{
                   left: `${(layer.startTime / safeDuration) * 100}%`,
+                  top: `${35 + index * 16}px`,
                   width: `${Math.max(
                     ((layer.endTime - layer.startTime) / safeDuration) * 100,
                     0.5,

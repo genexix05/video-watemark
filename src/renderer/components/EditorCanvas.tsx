@@ -1,6 +1,17 @@
-import { useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from 'react'
 import type { LayerPatch, MediaSource, WatermarkLayer } from '../editor-types'
-import { clamp, clientToMediaPoint, proportionalSize } from '../geometry'
+import {
+  clamp,
+  clientToMediaPoint,
+  proportionalSize,
+  snapLayerPosition,
+} from '../geometry'
 import { Icon } from './Icons'
 
 interface EditorCanvasProps {
@@ -13,6 +24,7 @@ interface EditorCanvasProps {
   onSelect: (id: string | null) => void
   onChange: (id: string, patch: LayerPatch) => void
   onMediaTime: (time: number) => void
+  onLoadingChange: (loading: boolean) => void
   onPlaybackChange: (playing: boolean) => void
 }
 
@@ -35,10 +47,24 @@ export function EditorCanvas({
   onSelect,
   onChange,
   onMediaTime,
+  onLoadingChange,
   onPlaybackChange,
 }: EditorCanvasProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
+  const [guides, setGuides] = useState({ horizontal: false, vertical: false })
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !('requestVideoFrameCallback' in video)) return
+    let frameId = 0
+    const update: VideoFrameRequestCallback = (_now, metadata) => {
+      onMediaTime(metadata.mediaTime)
+      frameId = video.requestVideoFrameCallback(update)
+    }
+    frameId = video.requestVideoFrameCallback(update)
+    return () => video.cancelVideoFrameCallback(frameId)
+  }, [media.url, onMediaTime, videoRef])
 
   const toMediaPoint = (event: ReactPointerEvent) => {
     const rect = stageRef.current!.getBoundingClientRect()
@@ -80,14 +106,25 @@ export function EditorCanvas({
     const { layer } = active
 
     if (active.type === 'move') {
+      const rect = stageRef.current!.getBoundingClientRect()
+      const snapped = snapLayerPosition(
+        layer.x + point.x - active.pointerX,
+        layer.y + point.y - active.pointerY,
+        layer.width,
+        layer.height,
+        media.width,
+        media.height,
+        (8 / rect.width) * media.width,
+      )
+      setGuides(snapped.guides)
       onChange(active.id, {
         x: clamp(
-          layer.x + point.x - active.pointerX,
+          snapped.x,
           -layer.width + 12,
           media.width - 12,
         ),
         y: clamp(
-          layer.y + point.y - active.pointerY,
+          snapped.y,
           -layer.height + 12,
           media.height - 12,
         ),
@@ -124,6 +161,7 @@ export function EditorCanvas({
     if (gesture.current) {
       event.currentTarget.releasePointerCapture(event.pointerId)
       gesture.current = null
+      setGuides({ horizontal: false, vertical: false })
     }
   }
 
@@ -151,20 +189,42 @@ export function EditorCanvas({
           onPointerDown={() => onSelect(null)}
         >
           {media.kind === 'image' ? (
-            <img alt={`Previsualización de ${media.name}`} src={media.url} />
+            <img
+              alt={`Previsualización de ${media.name}`}
+              onError={() => onLoadingChange(false)}
+              onLoad={() => onLoadingChange(false)}
+              src={media.url}
+            />
           ) : (
             <video
               aria-label={`Previsualización de ${media.name}`}
+              onCanPlay={() => onLoadingChange(false)}
               onEnded={() => onPlaybackChange(false)}
+              onError={() => onLoadingChange(false)}
+              onLoadStart={() => onLoadingChange(true)}
+              onLoadedData={() => onLoadingChange(false)}
               onPause={() => onPlaybackChange(false)}
-              onPlay={() => onPlaybackChange(true)}
+              onPlay={() => {
+                onLoadingChange(false)
+                onPlaybackChange(true)
+              }}
+              onPlaying={() => onLoadingChange(false)}
               onTimeUpdate={(event) => onMediaTime(event.currentTarget.currentTime)}
+              onWaiting={() => onLoadingChange(true)}
               ref={videoRef}
               src={media.url}
             />
           )}
 
           <div className="safe-area" aria-hidden="true" />
+          <div
+            aria-hidden="true"
+            className={`center-guide is-horizontal${guides.horizontal ? ' is-visible' : ''}`}
+          />
+          <div
+            aria-hidden="true"
+            className={`center-guide is-vertical${guides.vertical ? ' is-visible' : ''}`}
+          />
 
           {visibleLayers.map((layer) => {
             const selected = selectedId === layer.id
