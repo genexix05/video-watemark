@@ -1443,6 +1443,27 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1.5;
 }
 
+.preset-save-dialog form {
+  display: grid;
+  gap: 18px;
+}
+
+.preset-save-dialog label {
+  display: grid;
+  color: var(--muted);
+  font-size: 0.75rem;
+  gap: 7px;
+}
+
+.preset-save-dialog input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink);
+  background: var(--field);
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

@@ -60,6 +60,9 @@ export default function App() {
   const [completedPath, setCompletedPath] = useState<string | null>(null)
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [presets, setPresets] = useState<PresetSummary[]>([])
+  const [presetDialogOpen, setPresetDialogOpen] = useState(false)
+  const [savingPreset, setSavingPreset] = useState(false)
+  const [presetNotice, setPresetNotice] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const resumeAfterScrub = useRef(false)
   const scrubbingRef = useRef(false)
@@ -188,13 +191,14 @@ export default function App() {
     }
   }
 
-  const saveCurrentPreset = async () => {
+  const saveCurrentPreset = async (name: string) => {
     if (!media || layers.length === 0) return
-    const name = window.prompt('Nombre del preset')
-    if (!name) return
+    setSavingPreset(true)
+    setError(null)
+    setPresetNotice(null)
     try {
       const preset = await window.watermarkApi.savePreset({
-        name,
+        name: name.trim(),
         mediaWidth: media.width,
         mediaHeight: media.height,
         mediaDuration: media.duration,
@@ -215,8 +219,12 @@ export default function App() {
         })),
       })
       setPresets((current) => [...current, preset])
+      setPresetDialogOpen(false)
+      setPresetNotice(`Preset “${preset.name}” guardado.`)
     } catch (reason) {
       setError(errorMessage(reason))
+    } finally {
+      setSavingPreset(false)
     }
   }
 
@@ -616,6 +624,7 @@ export default function App() {
               Exportación completada: {completedPath}
             </output>
           )}
+          {presetNotice && <output className="success-toast">{presetNotice}</output>}
         </div>
 
         <aside className="right-dock">
@@ -630,10 +639,14 @@ export default function App() {
           />
           <PresetsPanel
             canSave={layers.length > 0}
-            disabled={exporting}
+            disabled={exporting || savingPreset}
             onApply={(id) => void applySavedPreset(id)}
             onDelete={(id) => void removePreset(id)}
-            onSave={() => void saveCurrentPreset()}
+            onSave={() => {
+              setError(null)
+              setPresetNotice(null)
+              setPresetDialogOpen(true)
+            }}
             presets={presets}
           />
         </aside>
@@ -680,6 +693,13 @@ export default function App() {
           videoProfile={videoProfile}
         />
       )}
+      {presetDialogOpen && (
+        <PresetSaveDialog
+          onClose={() => setPresetDialogOpen(false)}
+          onSave={saveCurrentPreset}
+          saving={savingPreset}
+        />
+      )}
       {loadingMedia && <LoadingOverlay />}
     </main>
   )
@@ -701,6 +721,79 @@ function LoadingOverlay() {
       <strong>Cargando archivo…</strong>
       <small>Los vídeos grandes pueden tardar unos segundos.</small>
     </div>
+  )
+}
+
+function PresetSaveDialog({
+  saving,
+  onClose,
+  onSave,
+}: Readonly<{
+  saving: boolean
+  onClose: () => void
+  onSave: (name: string) => Promise<void>
+}>) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [name, setName] = useState('')
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => {
+      if (dialog?.open) dialog.close()
+    }
+  }, [])
+
+  return (
+    <dialog
+      aria-labelledby="preset-dialog-title"
+      className="export-dialog preset-save-dialog"
+      onCancel={(event) => {
+        event.preventDefault()
+        if (!saving) onClose()
+      }}
+      ref={dialogRef}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (name.trim()) void onSave(name)
+        }}
+      >
+        <h2 id="preset-dialog-title">Guardar preset</h2>
+        <label>
+          <span>Nombre</span>
+          <input
+            autoFocus
+            disabled={saving}
+            maxLength={80}
+            onChange={(event) => setName(event.currentTarget.value)}
+            placeholder="Ej. Logo inferior derecho"
+            required
+            type="text"
+            value={name}
+          />
+        </label>
+        <p>Se copiarán internamente las imágenes y la configuración de las capas.</p>
+        <div className="dialog-actions">
+          <button
+            className="ghost-button"
+            disabled={saving}
+            onClick={onClose}
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            className="export-button"
+            disabled={saving || !name.trim()}
+            type="submit"
+          >
+            {saving ? 'Guardando…' : 'Guardar preset'}
+          </button>
+        </div>
+      </form>
+    </dialog>
   )
 }
 
