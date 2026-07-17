@@ -37,8 +37,10 @@ export const buildFilterGraph = (
     const watermark = `wm${index}`
     const composited = `composite${index}`
     const radians = `${number(layer.rotation)}*PI/180`
+    const scaledWidth = Math.max(1, Math.ceil(layer.width))
+    const scaledHeight = Math.max(1, Math.ceil(layer.height))
     filters.push(
-      `[${index + 1}:v]format=rgba,scale=${Math.round(layer.width)}:${Math.round(layer.height)}:flags=lanczos,rotate=${radians}:ow=rotw(iw):oh=roth(ih):c=none,colorchannelmixer=aa=${number(layer.opacity)}[${watermark}]`,
+      `[${index + 1}:v]format=rgba,pad=iw+32:ih+32:16:16:color=0x00000000,scale=ceil(${scaledWidth}*iw/(iw-32)):ceil(${scaledHeight}*ih/(ih-32)):flags=lanczos,rotate=${radians}:ow=ceil(rotw(${radians}))+2:oh=ceil(roth(${radians}))+2:c=none,colorchannelmixer=aa=${number(layer.opacity)}[${watermark}]`,
     )
     filters.push(
       `[${current}][${watermark}]overlay=x=${number(layer.x)}+(${number(layer.width)}-overlay_w)/2:y=${number(layer.y)}+(${number(layer.height)}-overlay_h)/2:eof_action=repeat${temporalEnable(layer, kind)}[${composited}]`,

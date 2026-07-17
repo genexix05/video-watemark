@@ -1,4 +1,4 @@
-import { access, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -34,10 +34,12 @@ import { runProcess } from '../../src/main/media/process'
 
 let directory: string
 let imageSource: string
+let whiteImageSource: string
 let videoSource: string
 let rotatedVideoSource: string
 let firstMark: string
 let secondMark: string
+let wideEdgeMark: string
 
 const ffmpeg = (...args: string[]) =>
   runProcess(binaries.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', ...args])
@@ -74,14 +76,26 @@ const layers = (): WatermarkLayer[] => [
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'watermark-pipeline-'))
   imageSource = join(directory, 'source.png')
+  whiteImageSource = join(directory, 'source-white.png')
   videoSource = join(directory, 'source.mp4')
   rotatedVideoSource = join(directory, 'source-rotated.mov')
   firstMark = join(directory, 'mark-red.png')
   secondMark = join(directory, 'mark-blue.png')
+  wideEdgeMark = join(directory, 'mark-wide-edge.png')
 
   await ffmpeg('-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=1', '-frames:v', '1', imageSource)
+  await ffmpeg('-f', 'lavfi', '-i', 'color=c=white:s=320x180', '-frames:v', '1', whiteImageSource)
   await ffmpeg('-f', 'lavfi', '-i', 'color=c=red@0.8:s=120x60', '-frames:v', '1', firstMark)
   await ffmpeg('-f', 'lavfi', '-i', 'color=c=blue@0.7:s=80x80', '-frames:v', '1', secondMark)
+  await ffmpeg(
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=black:s=682x91',
+    '-frames:v',
+    '1',
+    wideEdgeMark,
+  )
   await ffmpeg(
     '-f',
     'lavfi',
@@ -135,6 +149,50 @@ describe('pipeline multimedia local', () => {
     const metadata = await probeMedia(destinationPath)
     expect(metadata).toMatchObject({ kind: 'image', width: 320, height: 180 })
     await expect(access(destinationPath)).resolves.toBeUndefined()
+  }, 30_000)
+
+  it('conserva una marca 682x91 al exportarla a 214x28.55', async () => {
+    const destinationPath = join(directory, 'small-wide-mark.png')
+    const pixelsPath = join(directory, 'small-wide-mark.raw')
+    await exportImage({
+      jobId: 'small-wide-mark',
+      sourcePath: whiteImageSource,
+      destinationPath,
+      format: 'png',
+      layers: [
+        {
+          id: 'wide',
+          sourcePath: wideEdgeMark,
+          x: 100,
+          y: 80,
+          width: 214,
+          height: 28.55,
+          rotation: 0,
+          opacity: 1,
+          order: 0,
+        },
+      ],
+    })
+    await ffmpeg(
+      '-i',
+      destinationPath,
+      '-vf',
+      'crop=220:40:97:74,format=gray',
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      pixelsPath,
+    )
+    const pixels = await readFile(pixelsPath)
+    const darkCoordinates = Array.from(pixels.entries())
+      .filter(([, value]) => value < 245)
+      .map(([index]) => ({ x: index % 220, y: Math.floor(index / 220) }))
+    expect(darkCoordinates.length).toBeGreaterThan(0)
+    expect(Math.min(...darkCoordinates.map(({ x }) => x))).toBeLessThanOrEqual(5)
+    expect(Math.max(...darkCoordinates.map(({ x }) => x))).toBeGreaterThanOrEqual(214)
+    expect(Math.min(...darkCoordinates.map(({ y }) => y))).toBeLessThanOrEqual(10)
+    expect(Math.max(...darkCoordinates.map(({ y }) => y))).toBeGreaterThanOrEqual(30)
   }, 30_000)
 
   it.each(['high', 'lossless', 'compact'] as const)(

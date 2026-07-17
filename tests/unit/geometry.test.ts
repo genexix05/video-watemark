@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clamp,
   clientToMediaPoint,
+  constrainLayerGeometry,
   proportionalSize,
   snapLayerPosition,
 } from '../../src/renderer/geometry'
@@ -60,5 +61,65 @@ describe('geometría del editor', () => {
       y: 30,
       guides: { horizontal: false, vertical: false },
     })
+  })
+
+  it('mantiene una marca alta dentro de un lienzo horizontal sin deformarla', () => {
+    const result = constrainLayerGeometry(
+      {
+        x: -50,
+        y: -100,
+        width: 300,
+        height: 900,
+        rotation: 0,
+        naturalWidth: 100,
+        naturalHeight: 300,
+      },
+      540,
+      300,
+    )
+    expect(result.width / result.height).toBeCloseTo(1 / 3)
+    expect(result.x).toBeGreaterThanOrEqual(0)
+    expect(result.y).toBeGreaterThanOrEqual(0)
+    expect(result.x + result.width).toBeLessThanOrEqual(540)
+    expect(result.y + result.height).toBeLessThanOrEqual(300)
+  })
+
+  it('reduce y centra los límites rotados para evitar recortes', () => {
+    const result = constrainLayerGeometry(
+      {
+        x: 900,
+        y: 900,
+        width: 800,
+        height: 400,
+        rotation: 45,
+        naturalWidth: 2,
+        naturalHeight: 1,
+      },
+      1080,
+      1080,
+    )
+    const bounds = result.width * Math.SQRT1_2 + result.height * Math.SQRT1_2
+    expect(bounds).toBeLessThanOrEqual(1080)
+    expect(result.width / result.height).toBeCloseTo(2)
+    expect(result.x).toBeLessThan(900)
+    expect(result.y).toBeLessThan(900)
+  })
+
+  it('impide que cualquier eje baje de ocho píxeles', () => {
+    const panoramic = constrainLayerGeometry(
+      {
+        x: 100,
+        y: 100,
+        width: 20,
+        height: 2.67,
+        rotation: 0,
+        naturalWidth: 682,
+        naturalHeight: 91,
+      },
+      1536,
+      2048,
+    )
+    expect(panoramic.height).toBeGreaterThanOrEqual(8)
+    expect(panoramic.width / panoramic.height).toBeCloseTo(682 / 91)
   })
 })

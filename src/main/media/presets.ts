@@ -175,6 +175,7 @@ export const applyPreset = async (
   }
   const scaleX = mediaWidth / preset.mediaWidth
   const scaleY = mediaHeight / preset.mediaHeight
+  const uniformScale = Math.min(scaleX, scaleY)
   const timeScale = preset.mediaDuration > 0 ? mediaDuration / preset.mediaDuration : 1
   const directory = resolve(rootPath(), id)
   const layers = await Promise.all(preset.layers.map(async (layer, index) => {
@@ -192,15 +193,31 @@ export const applyPreset = async (
       throw new Error('Falta una imagen interna del preset.')
     }
     await validateLayer({ ...layer, sourcePath }, index)
+    const ratio = layer.naturalWidth / layer.naturalHeight
+    let width = layer.width * uniformScale
+    let height = width / ratio
+    const fitScale = Math.min(1, mediaWidth / width, mediaHeight / height)
+    width *= fitScale
+    height *= fitScale
+    const normalizedCenterX = (layer.x + layer.width / 2) / preset.mediaWidth
+    const normalizedCenterY = (layer.y + layer.height / 2) / preset.mediaHeight
+    const x = Math.min(
+      Math.max(normalizedCenterX * mediaWidth - width / 2, 0),
+      mediaWidth - width,
+    )
+    const y = Math.min(
+      Math.max(normalizedCenterY * mediaHeight - height / 2, 0),
+      mediaHeight - height,
+    )
     return {
       ...layer,
       id: randomUUID(),
       sourcePath,
       previewUrl: '',
-      x: layer.x * scaleX,
-      y: layer.y * scaleY,
-      width: layer.width * scaleX,
-      height: layer.height * scaleY,
+      x,
+      y,
+      width,
+      height,
       startTime: Math.min(mediaDuration, layer.startTime * timeScale),
       endTime: Math.min(mediaDuration, layer.endTime * timeScale),
     }

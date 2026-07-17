@@ -16,6 +16,16 @@ export interface SnapResult {
   guides: { horizontal: boolean; vertical: boolean }
 }
 
+export interface LayerGeometry {
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+  naturalWidth: number
+  naturalHeight: number
+}
+
 export const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
 
@@ -45,6 +55,37 @@ export const proportionalSize = (
       : initialWidth + deltaY * ratio
   const width = clamp(proposedWidth, minimumWidth, maximumWidth)
   return { width, height: width / ratio }
+}
+
+export const constrainLayerGeometry = (
+  layer: LayerGeometry,
+  mediaWidth: number,
+  mediaHeight: number,
+): Pick<LayerGeometry, 'x' | 'y' | 'width' | 'height'> => {
+  const ratio = layer.naturalWidth / layer.naturalHeight
+  const radians = (layer.rotation * Math.PI) / 180
+  const cosine = Math.abs(Math.cos(radians))
+  const sine = Math.abs(Math.sin(radians))
+  const rotatedWidthFactor = cosine + sine / ratio
+  const rotatedHeightFactor = sine + cosine / ratio
+  const maximumWidth = Math.min(
+    mediaWidth / rotatedWidthFactor,
+    mediaHeight / rotatedHeightFactor,
+  )
+  const minimumWidth = Math.min(Math.max(8, ratio * 8), maximumWidth)
+  const width = clamp(layer.width, minimumWidth, maximumWidth)
+  const height = width / ratio
+  const boundsWidth = width * rotatedWidthFactor
+  const boundsHeight = width * rotatedHeightFactor
+  const offsetX = (boundsWidth - width) / 2
+  const offsetY = (boundsHeight - height) / 2
+
+  return {
+    width,
+    height,
+    x: clamp(layer.x, offsetX, mediaWidth - width - offsetX),
+    y: clamp(layer.y, offsetY, mediaHeight - height - offsetY),
+  }
 }
 
 const snapAxis = (

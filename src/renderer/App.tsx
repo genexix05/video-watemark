@@ -13,6 +13,7 @@ import { PropertiesPanel } from './components/PropertiesPanel'
 import { PresetsPanel } from './components/PresetsPanel'
 import { Timeline } from './components/Timeline'
 import type { LayerPatch, MediaSource, WatermarkLayer } from './editor-types'
+import { constrainLayerGeometry } from './geometry'
 import './styles.css'
 
 const getImageDimensions = (file: SelectedFile) =>
@@ -128,13 +129,15 @@ export default function App() {
       files.map(async (file, index): Promise<WatermarkLayer | null> => {
         try {
           const dimensions = await getImageDimensions(file)
+          const ratio = dimensions.width / dimensions.height
           const width = Math.min(
             media.width * 0.24,
             dimensions.width,
             media.width * 0.65,
+            media.height * 0.65 * ratio,
           )
-          const height = width / (dimensions.width / dimensions.height)
-          return {
+          const height = width / ratio
+          const layer: WatermarkLayer = {
             id: crypto.randomUUID(),
             name: file.name,
             sourcePath: file.path,
@@ -150,6 +153,10 @@ export default function App() {
             startTime: 0,
             endTime: media.duration,
             visible: true,
+          }
+          return {
+            ...layer,
+            ...constrainLayerGeometry(layer, media.width, media.height),
           }
         } catch {
           return null
@@ -171,7 +178,16 @@ export default function App() {
 
   const updateLayer = (id: string, patch: LayerPatch) => {
     setLayers((current) =>
-      current.map((layer) => (layer.id === id ? { ...layer, ...patch } : layer)),
+      current.map((layer) => {
+        if (layer.id !== id) return layer
+        const updated = { ...layer, ...patch }
+        return media
+          ? {
+              ...updated,
+              ...constrainLayerGeometry(updated, media.width, media.height),
+            }
+          : updated
+      }),
     )
   }
 
@@ -238,7 +254,13 @@ export default function App() {
         media.duration,
       )
       const additions: WatermarkLayer[] = preset.layers.map(
-        ({ previewUrl, ...layer }) => ({ ...layer, url: previewUrl }),
+        ({ previewUrl, ...layer }) => {
+          const addition = { ...layer, url: previewUrl }
+          return {
+            ...addition,
+            ...constrainLayerGeometry(addition, media.width, media.height),
+          }
+        },
       )
       setLayers((current) => [...current, ...additions])
       setSelectedId(additions.at(-1)?.id ?? null)
